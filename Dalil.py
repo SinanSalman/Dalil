@@ -15,7 +15,7 @@ import PyPDF4 as pdf
 from extract_digit_images import GetDigitImages
 
 print(f'Loading config file...')
-config = json.load(open('AutoEvidence.cfg','r'))
+config = json.load(open('Dalil.cfg','r'))
 ID_box = config['ID_box']
 Header_box = config['Header_box']
 header_detection_threshold = config['header_detection_threshold']
@@ -99,7 +99,7 @@ def has_header(im, chksum = 0):
 
 @click.group()
 def main():
-    """AutoEvidence is a automation tool for blackboard exam evidence"""
+    """Dalil is a automation tool for blackboard exam evidence"""
 
 
 @main.command('show_h')

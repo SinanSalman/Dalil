@@ -2,6 +2,17 @@
 # Other
 .DS_Store
 
+# Large files
+emnist-bymerge.mat
+MNIST_M_dataset.h5
+
+# Sensitive data
+gc_*.xls
+_Data\ for\ testing/
+input/
+output/
+test/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
