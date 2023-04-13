@@ -10,7 +10,7 @@ import PIL
 import click
 import json
 import numpy as np
-import PyPDF4 as pdf
+import fitz
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import glob
@@ -19,14 +19,11 @@ import difflib
 import extract_digit_images as edi
 
 print(f'Loading config file...')
-config = json.load(open('Dalil.cfg','r'))
+config = json.load(open('dalil.cfg','r'))
 ID_box = config['ID_box']
 Header_box = config['Header_box']
 header_detection_threshold = config['header_detection_threshold']
 ratio_threshold = config['ratio_threshold']
-img_modes = {'/DeviceRGB': 'RGB', '/DefaultRGB': 'RGB', '/DeviceCMYK': 'CMYK', '/DefaultCMYK': 'CMYK',
-             '/DeviceGray': 'L', '/DefaultGray': 'L', '/Indexed': 'P'}
-
 
 def ocr_files(files):
     """run a list of PDF files in OCR using the first page"""
@@ -36,8 +33,8 @@ def ocr_files(files):
     print(f'OCR in progress...\n')
     ID_list = []
     for filename in files:
-        pdf_reader = pdf.PdfFileReader(filename)
-        img = get_img_from_page(pdf_reader.getPage(0),pdf_reader)
+        doc = fitz.open(filename)
+        img = get_img_from_page(doc[0])
         ID_list.append(ExtractID(img, model))
     return pd.DataFrame({'ID':ID_list, 'File':files})
 
@@ -62,40 +59,16 @@ def ExtractID(img, model):
     return ''.join(s_id)
 
 
-def get_img_from_page(page, pdfreader):
+def get_img_from_page(page):
     """
-    pull image from pdf page; 
-    adapted from https://github.com/claird/PyPDF4/blob/master/scripts/pdf-image-extractor.py
-    Other sources of info include: https://gist.github.com/gstorer/f6a9f1dfe41e8e64dcf58d07afa9ab2a and
-    https://stackoverflow.com/questions/32192671/pil-image-mode-i-is-grayscale
+    pull image from pdf page
     """
-    if '/XObject' in page['/Resources']:
-        xObject = page['/Resources']['/XObject'].getObject()
-        for obj in xObject:
-            if xObject[obj]['/Subtype'] == '/Image':
-                size = (xObject[obj]['/Width'], xObject[obj]['/Height'])
-                data = xObject[obj].getData()
-                color = xObject[obj]['/ColorSpace']
-                if type(color) != pdf.generic.NameObject:
-                    color = pdfreader.getObject(xObject[obj]['/ColorSpace'][1])['/Alternate']
-                mode = img_modes[color]
-                if '/Filter' in xObject[obj]:
-                    if xObject[obj]['/Filter'] == '/FlateDecode':
-                        try:
-                            img = PIL.Image.frombytes(mode, size, data)
-                        except:
-                            mode = '1'  # maybe its B&W?
-                            img = PIL.Image.frombytes(mode, size, data)
-                    elif xObject[obj]['/Filter'] == '/DCTDecode':
-                        img = PIL.Image.open(io.BytesIO(data))
-                    elif xObject[obj]['/Filter'] == '/JPXDecode':
-                        img = PIL.Image.open(io.BytesIO(data))
-                    elif xObject[obj]['/Filter'] == '/CCITTFaxDecode':
-                        img = PIL.Image.open(io.BytesIO(data))
-                else:
-                    img = PIL.Image.frombytes(mode, size, data)
-    else:
-        print("No image found in page.")
+    images = page.get_images()
+    if len(images) != 1:
+        print(f'warning: found {len(images)} images in pdf page')
+    img_obj = page.parent.extract_image(images[0][0])
+    img_bytes = img_obj["image"]
+    img = PIL.Image.open(io.BytesIO(img_bytes))
     return img
 
 
@@ -150,6 +123,9 @@ def crossref(results):
         for s_id, maxratio in xr_df.max().sort_values(ascending=False).items():
             newID = xr_df[s_id].idxmax()
             ratio = xr_df[s_id].max()
+            if type(ratio) == pd.Series:
+                ratio = ratio[0]
+                newID = newID[0]
             if ratio >= ratio_threshold:
                 results.loc[results.ID==s_id,'MatchRatio'] = ratio
                 results.loc[results.ID==s_id,'Name'] = xr[xr.ID==newID].Name.iloc[0]
@@ -173,9 +149,9 @@ def main():
 @click.option('-c', '--count', type=click.INT, default=1)
 def show_header(filename, count):
     """show header in pdf file by page"""
-    pdf_reader = pdf.PdfFileReader(filename)
+    doc = fitz.open(filename)
     for i in range(count):
-        img = get_img_from_page(pdf_reader.getPage(i), pdf_reader)
+        img = get_img_from_page(doc[i])
         w, h = img.size
         img.crop((Header_box[0]*w, Header_box[1]*h,Header_box[2]*w, Header_box[3]*h)).show()
 
@@ -185,19 +161,17 @@ def show_header(filename, count):
 @click.option('-c', '--count', type=click.INT, default=1)
 def show_header(filename, count):
     """show ID in pdf file by page"""
-    pdf_reader = pdf.PdfFileReader(filename)
+    doc = fitz.open(filename)
     for i in range(count):
         try:
-            img = get_img_from_page(pdf_reader.getPage(i), pdf_reader)
+            img = get_img_from_page(doc[i])
             w, h = img.size
             img = img.crop((ID_box[0]*w, ID_box[1]*h,ID_box[2]*w, ID_box[3]*h))
             im = edi.convert_im(img, conversion='grey')
             b_xy,b_w,b_h = edi.find_box(im)
             boxes = edi.find_digit_boxes(b_xy,b_w,b_h,9)
-            # fg = plt.figure()
-            ax = plt.subplot(1, 1, 1)
-            # ax.axis('off')
-            ax.imshow(img)
+            plt.imshow(img)
+            ax = plt.gca()
             rect = patches.Rectangle(b_xy,b_w,b_h,linewidth=1,edgecolor='lime',facecolor='none')
             ax.add_patch(rect)
             for b in boxes:
@@ -205,7 +179,10 @@ def show_header(filename, count):
                 ax.add_patch(rect)
             plt.show()
         except:
-            print(f'Couldn\'t find ID area in page {i+1}')
+            print(f'Couldn\'t find an ID in area selected in page {i+1}')
+            if img:
+                plt.imshow(img)
+                plt.show()
 
 
 @main.command('merge')
@@ -213,18 +190,16 @@ def show_header(filename, count):
 @click.option('-o', '--out', default='merged.pdf')
 def merge(filenames,out):
     """merge pdf files"""
-    pdf_writer = pdf.PdfFileWriter()
+    newdoc = fitz.open()
     n = 0
     for filename in filenames:
-        pdf_reader = pdf.PdfFileReader(filename)
-        print(f'found {pdf_reader.getNumPages()} pages in {filename}')
-        for page in range(pdf_reader.getNumPages()):
-            pdf_writer.addPage(pdf_reader.getPage(page))
+        doc = fitz.open(filename)
+        print(f'found {doc.page_count} pages in {filename}')
+        newdoc.insert_pdf(doc)
         n += 1
     if n>0:
-        with open(out, 'wb') as outfilename:
-            pdf_writer.write(outfilename)
-        print(f'merged {n} files into {out}')
+        newdoc.ez_save(out)
+    print(f'merged {n} files into {out}')
 
 
 @main.command('split_c')
@@ -232,62 +207,52 @@ def merge(filenames,out):
 @click.option('-c', '--count', type=click.INT, required=True)
 def split_by_count(filename, count):
     """split pdf file by page count"""
-    base = click.format_filename(filename)[:-4]  # lose the ext
-    pdf_reader = pdf.PdfFileReader(filename)
-    pages = pdf_reader.getNumPages()
-    n=0
-    for first_page in range(0, pages, count):
-        pdf_reader = pdf.PdfFileReader(filename)
-        pdf_writer = pdf.PdfFileWriter()  # needed to avoid a bug in pyPDF4
-        for i in range(count):
-            pdf_writer.addPage(pdf_reader.getPage(first_page+i))
+    base = os.path.basename(click.format_filename(filename))[:-4]  # lose the ext and path
+    doc = fitz.open(filename)
+    n = 0
+    for first_page in range(0, doc.page_count, count):
         n += 1
-        output = f'output/{base}{n:03d}.pdf'
-        with open(output, 'wb') as output_pdf:
-            pdf_writer.write(output_pdf)
-        print(f'created {output}')
+        outfile = f'output/{base}-{n:03d}.pdf'
+        newdoc = fitz.open()
+        newdoc.insert_pdf(doc, from_page=first_page, to_page=first_page+count-1)
+        newdoc.ez_save(outfile)
+        print(f'created {outfile}')
 
 
 @main.command('split_h')
 @click.argument('filename', type=click.Path(exists=True))
 def split_by_header(filename):
     """split pdf file by header detection"""
-    base = os.path.basename(click.format_filename(filename))[:-4]
-    pdf_reader = pdf.PdfFileReader(filename)
+    base = os.path.basename(click.format_filename(filename)).split('.')[0]
+    doc = fitz.open(filename)
     n = 0
     pageNo = 0
-    doc = []
+    pagecount = 0
     chksum = 0
-    while (pageNo < pdf_reader.numPages):
-        page = pdf_reader.getPage(pageNo)
-        img = get_img_from_page(page,pdf_reader)
+    while (pageNo < doc.page_count):
+        img = get_img_from_page(doc[pageNo])
         w, h = img.size
         im = np.array(img.crop((Header_box[0]*w,Header_box[1]*h,Header_box[2]*w,Header_box[3]*h)))
-        pagecount = len(doc)
         if chksum == 0:
             chksum = has_header(im)
         if has_header(im,chksum) and pagecount > 0:
             n += 1
-            pdf_writer = pdf.PdfFileWriter()
-            for p in doc:
-                pdf_writer.addPage(p)
-            output = f'output/{base}{n:03d}.pdf'
-            with open(output, 'wb') as output_pdf:
-                pdf_writer.write(output_pdf)
-            print(f'split {pagecount} pages into {output}')
-            doc = [page]
+            outfile = f'output/{base}-{n:03d}.pdf'
+            newdoc = fitz.open()
+            newdoc.insert_pdf(doc, from_page=pageNo-pagecount, to_page=pageNo-1)
+            newdoc.ez_save(outfile)
+            print(f'split {pagecount} pages into {outfile}')
+            pagecount = 1
         else:
-            doc.append(page)    
+            pagecount += 1
         pageNo += 1
     #  save last document
     n += 1
-    pdf_writer = pdf.PdfFileWriter()
-    for p in doc:
-        pdf_writer.addPage(p)
-    output = f'output/{base}{n:03d}.pdf'
-    with open(output, 'wb') as output_pdf:
-        pdf_writer.write(output_pdf)
-    print(f'split {pagecount+1} pages into {output}')
+    outfile = f'output/{base}-{n:03d}.pdf'
+    newdoc = fitz.open()
+    newdoc.insert_pdf(doc, from_page=pageNo-pagecount, to_page=pageNo-1)
+    newdoc.ez_save(outfile)
+    print(f'split {pagecount} pages into {outfile}')
 
 
 @main.command('id')
@@ -298,10 +263,11 @@ def rename2id(filenames, name):
     results = ocr_files(filenames)
     results = crossref(results)
     for index, row in results.iterrows():
+        basename = os.path.basename(row.File).split('.')[0]
         if name:
-            newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}_{row.Name}.pdf')
+            newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}_{row.Name}_{basename}.pdf')
         else:
-            newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}.pdf')
+            newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}_{basename}.pdf')
         if not os.path.exists(newfilename):
             print(f'renaming {row["File"]} to {newfilename}')
             os.rename(row['File'],newfilename)
@@ -319,7 +285,8 @@ def test(filenames, name):
     results = ocr_files(filenames)
     print(f'Checking results...')
     for index, row in results.iterrows():
-        newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}.pdf')
+        basename = os.path.basename(row.File).split('.')[0]
+        newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}_{basename}.pdf')
         if os.path.exists(newfilename):
             p += 1
         else:
@@ -331,10 +298,11 @@ def test(filenames, name):
     print(f'Trying to crossreference IDs...')
     results = crossref(results)
     for index, row in results.iterrows():
+        basename = os.path.basename(row.File).split('.')[0]
         if name:
-            newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}_{row.Name}.pdf')
+            newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}_{row.Name}_{basename}.pdf')
         else:
-            newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}.pdf')
+            newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}_{basename}.pdf')
         if os.path.exists(newfilename):
             p += 1
         else:

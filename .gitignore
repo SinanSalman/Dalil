@@ -1,6 +1,7 @@
 
 # Other
 .DS_Store
+.vscode
 
 # Large files
 emnist-bymerge.mat
