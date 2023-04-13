@@ -265,7 +265,7 @@ def rename2id(filenames, name):
     for index, row in results.iterrows():
         basename = os.path.basename(row.File).split('.')[0]
         if name:
-            newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}_{row.Name}_{basename}.pdf')
+            newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.Name}_{row.ID}_{basename}.pdf')
         else:
             newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}_{basename}.pdf')
         if not os.path.exists(newfilename):
@@ -300,7 +300,7 @@ def test(filenames, name):
     for index, row in results.iterrows():
         basename = os.path.basename(row.File).split('.')[0]
         if name:
-            newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}_{row.Name}_{basename}.pdf')
+            newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.Name}_{row.ID}_{basename}.pdf')
         else:
             newfilename = os.path.join(os.path.split(row['File'])[0],f'{row.ID}_{basename}.pdf')
         if os.path.exists(newfilename):
