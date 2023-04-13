@@ -4,7 +4,7 @@
 Usage:
 
 ```shell
-$ ./Dalil.py 
+$ ./dalil.py 
 Loading config file...
 Usage: Dalil.py [OPTIONS] COMMAND [ARGS]...
 
